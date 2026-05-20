@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Tesseract Raw Data Viewer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&display=swap');
+    body { background: #0d1117; margin: 0; font-family: 'IBM Plex Mono', monospace; }
+    .scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+    .scrollbar::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
+    canvas { display: block; max-width: 100%; }
+  </style>
+</head>
+<body class="text-gray-300 min-h-screen">
+<div class="max-w-6xl mx-auto p-6 space-y-6">
+
+  <!-- 헤더 -->
+  <div class="border border-[#30363d] rounded-xl p-5 bg-[#161b22]">
+    <div class="text-[10px] text-gray-500 tracking-[4px] uppercase mb-1">// Diagnostic Tool</div>
+    <h1 class="text-xl font-bold text-white">Tesseract Raw Data Viewer</h1>
+    <p class="text-[11px] text-gray-500 mt-1">PDF 1페이지를 통째로 Tesseract에 넣어 word bbox 원시 데이터를 확인합니다.</p>
+  </div>
+
+  <!-- 업로드 -->
+  <div id="upload-zone"
+    class="border-2 border-dashed border-[#30363d] rounded-xl p-12 text-center cursor-pointer hover:border-blue-500 transition-colors"
+    onclick="document.getElementById('file-input').click()">
+    <div class="text-4xl mb-3">📄</div>
+    <div class="text-sm text-gray-400">PDF 또는 이미지 클릭하여 선택</div>
+    <div class="text-[10px] text-gray-600 mt-1">1페이지만 처리합니다</div>
+    <input id="file-input" type="file" accept="application/pdf,image/*" class="hidden"/>
+  </div>
+
+  <!-- 상태 -->
+  <div id="status" class="hidden border border-[#30363d] rounded-xl p-4 bg-[#161b22]">
+    <div id="status-text" class="text-[11px] text-blue-400 font-bold"></div>
+    <div class="mt-2 h-1 bg-[#30363d] rounded overflow-hidden">
+      <div id="progress-bar" class="h-full bg-blue-500 rounded transition-all" style="width:0%"></div>
+    </div>
+  </div>
+
+  <!-- 결과 영역 -->
+  <div id="results" class="hidden space-y-6">
+
+    <!-- 캔버스: bbox 오버레이 -->
+    <div class="border border-[#30363d] rounded-xl p-4 bg-[#161b22]">
+      <div class="text-[10px] text-gray-500 uppercase tracking-[3px] mb-3">// 이미지 + BBox 오버레이</div>
+      <div class="text-[10px] text-gray-600 mb-2">
+        🟦 파란 박스 = word bbox | 숫자 = conf% | 빨간점 = 중심 X,Y
+      </div>
+      <div class="overflow-auto">
+        <canvas id="overlay-canvas"></canvas>
+      </div>
+    </div>
+
+    <!-- 요약 통계 -->
+    <div id="summary" class="border border-[#30363d] rounded-xl p-4 bg-[#161b22]">
+      <div class="text-[10px] text-gray-500 uppercase tracking-[3px] mb-3">// 요약</div>
+      <div id="summary-content" class="grid grid-cols-2 gap-3 text-[11px]"></div>
+    </div>
+
+    <!-- Raw JSON 테이블 -->
+    <div class="border border-[#30363d] rounded-xl p-4 bg-[#161b22]">
+      <div class="flex items-center justify-between mb-3">
+        <div class="text-[10px] text-gray-500 uppercase tracking-[3px]">// Word Raw Data (전체)</div>
+        <button onclick="copyJSON()" class="text-[10px] bg-[#21262d] border border-[#30363d] px-3 py-1.5 rounded text-gray-300 hover:text-white transition-colors">
+          📋 JSON 복사
+        </button>
+      </div>
+
+      <!-- 필터 -->
+      <div class="flex gap-2 mb-3 flex-wrap">
+        <label class="flex items-center gap-1.5 text-[10px] text-gray-400 cursor-pointer">
+          <input type="checkbox" id="filter-low-conf" onchange="renderTable()" class="accent-blue-500"/>
+          신뢰도 50 미만 숨기기
+        </label>
+        <label class="flex items-center gap-1.5 text-[10px] text-gray-400 cursor-pointer">
+          <input type="checkbox" id="filter-short" onchange="renderTable()" class="accent-blue-500"/>
+          1글자 숨기기
+        </label>
+        <input type="text" id="filter-text" oninput="renderTable()" placeholder="텍스트 검색..."
+          class="bg-[#0d1117] border border-[#30363d] rounded px-2 py-1 text-[10px] text-gray-300 outline-none focus:border-blue-500 w-32"/>
+      </div>
+
+      <div class="overflow-auto max-h-[500px] scrollbar">
+        <table class="w-full text-[10px] border-collapse">
+          <thead class="sticky top-0 bg-[#161b22]">
+            <tr class="text-gray-500 border-b border-[#30363d]">
+              <th class="text-left p-2 font-normal">#</th>
+              <th class="text-left p-2 font-normal">텍스트</th>
+              <th class="text-right p-2 font-normal">x0</th>
+              <th class="text-right p-2 font-normal">y0</th>
+              <th class="text-right p-2 font-normal">x1</th>
+              <th class="text-right p-2 font-normal">y1</th>
+              <th class="text-right p-2 font-normal">중심X</th>
+              <th class="text-right p-2 font-normal">중심Y</th>
+              <th class="text-right p-2 font-normal">너비</th>
+              <th class="text-right p-2 font-normal">높이</th>
+              <th class="text-right p-2 font-normal">conf%</th>
+            </tr>
+          </thead>
+          <tbody id="word-table-body"></tbody>
+        </table>
+      </div>
+      <div id="table-count" class="text-[10px] text-gray-600 mt-2"></div>
+    </div>
+
+    <!-- Raw JSON 원문 -->
+    <div class="border border-[#30363d] rounded-xl p-4 bg-[#161b22]">
+      <div class="text-[10px] text-gray-500 uppercase tracking-[3px] mb-3">// Raw JSON (words 배열)</div>
+      <pre id="raw-json" class="text-[9px] text-green-400 overflow-auto max-h-64 scrollbar whitespace-pre-wrap break-all"></pre>
+    </div>
+
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script>
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+  let allWords = [];
+  let processedCanvas = null;
+
+  // 드래그앤드롭
+  const zone = document.getElementById('upload-zone');
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('border-blue-500'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('border-blue-500'));
+  zone.addEventListener('drop', e => { e.preventDefault(); zone.classList.remove('border-blue-500'); handleFile(e.dataTransfer.files[0]); });
+  document.getElementById('file-input').addEventListener('change', e => handleFile(e.target.files[0]));
+
+  function setStatus(text, pct) {
+    document.getElementById('status').classList.remove('hidden');
+    document.getElementById('status-text').textContent = text;
+    document.getElementById('progress-bar').style.width = (pct || 0) + '%';
+  }
+
+  async function handleFile(file) {
+    if (!file) return;
+    document.getElementById('results').classList.add('hidden');
+    setStatus('📄 파일 렌더링 중...', 10);
+
+    try {
+      // PDF → Canvas
+      let canvas;
+      if (file.type.includes('pdf')) {
+        const buf = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+        const page = await pdf.getPage(1);
+        const vp = page.getViewport({ scale: 300 / 72 });
+        canvas = document.createElement('canvas');
+        canvas.width = vp.width; canvas.height = vp.height;
+        await page.render({ canvasContext: canvas.getContext('2d', { willReadFrequently: true }), viewport: vp }).promise;
+        if (page.cleanup) page.cleanup();
+      } else {
+        const img = new Image();
+        await new Promise(r => { img.onload = r; img.src = URL.createObjectURL(file); });
+        canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+        canvas.getContext('2d').drawImage(img, 0, 0);
+      }
+      processedCanvas = canvas;
+
+      setStatus('🔤 Tesseract 초기화 중... (첫 실행 시 언어팩 다운로드 약 20MB)', 20);
+
+      // Tesseract 실행
+      const worker = await Tesseract.createWorker('kor+eng', 1, {
+        logger: m => {
+          if (m.status === 'loading language traineddata')
+            setStatus(`📦 언어팩 다운로드 중... ${Math.round((m.progress||0)*100)}%`, 20 + Math.round((m.progress||0)*40));
+          if (m.status === 'recognizing text')
+            setStatus(`🔍 인식 중... ${Math.round((m.progress||0)*100)}%`, 60 + Math.round((m.progress||0)*30));
+        },
+      });
+
+      setStatus('🔍 전체 이미지 인식 중...', 60);
+
+      // PSM 3(자동): 전체 이미지를 한 번에
+      await worker.setParameters({
+        tessedit_pageseg_mode: '3',
+        tessedit_char_whitelist: '',
+        preserve_interword_spaces: '1',
+      });
+
+      const { data } = await worker.recognize(canvas);
+      await worker.terminate();
+
+      setStatus('✅ 완료!', 100);
+
+      // 단어 배열 추출
+      allWords = (data.words || []).map((w, i) => ({
+        idx: i + 1,
+        text: w.text,
+        x0: w.bbox.x0, y0: w.bbox.y0,
+        x1: w.bbox.x1, y1: w.bbox.y1,
+        cx: Math.round((w.bbox.x0 + w.bbox.x1) / 2),
+        cy: Math.round((w.bbox.y0 + w.bbox.y1) / 2),
+        w: w.bbox.x1 - w.bbox.x0,
+        h: w.bbox.y1 - w.bbox.y0,
+        conf: Math.round(w.confidence),
+      }));
+
+      renderOverlay(canvas, allWords);
+      renderSummary(canvas, allWords);
+      renderTable();
+      document.getElementById('raw-json').textContent =
+        JSON.stringify(allWords.slice(0, 50), null, 2) + (allWords.length > 50 ? '\n\n// ... 총 ' + allWords.length + '개 중 앞 50개만 표시. 아래 JSON 복사 버튼으로 전체 복사.' : '');
+      document.getElementById('results').classList.remove('hidden');
+
+    } catch(e) {
+      setStatus('❌ 오류: ' + (e.message || String(e)), 0);
+      console.error(e);
+    }
+  }
+
+  function renderOverlay(srcCanvas, words) {
+    const MAX_W = Math.min(srcCanvas.width, 1400);
+    const scale = MAX_W / srcCanvas.width;
+    const outCanvas = document.getElementById('overlay-canvas');
+    outCanvas.width = Math.round(srcCanvas.width * scale);
+    outCanvas.height = Math.round(srcCanvas.height * scale);
+    const ctx = outCanvas.getContext('2d');
+    ctx.drawImage(srcCanvas, 0, 0, outCanvas.width, outCanvas.height);
+
+    for (const w of words) {
+      const x0 = w.x0 * scale, y0 = w.y0 * scale;
+      const x1 = w.x1 * scale, y1 = w.y1 * scale;
+      const cx = w.cx * scale, cy = w.cy * scale;
+
+      // conf에 따라 색상 구분
+      const alpha = w.conf >= 80 ? 0.9 : w.conf >= 50 ? 0.6 : 0.3;
+      const color = w.conf >= 80 ? `rgba(59,130,246,${alpha})`
+                  : w.conf >= 50 ? `rgba(234,179,8,${alpha})`
+                  : `rgba(239,68,68,${alpha})`;
+
+      // bbox
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+
+      // 중심점 (빨간 점)
+      ctx.fillStyle = 'rgba(239,68,68,0.9)';
+      ctx.beginPath(); ctx.arc(cx, cy, 2, 0, Math.PI * 2); ctx.fill();
+
+      // conf 라벨 (공간 있을 때만)
+      if ((x1 - x0) > 20) {
+        ctx.fillStyle = color;
+        ctx.font = `${Math.max(7, 9 * scale)}px IBM Plex Mono,monospace`;
+        ctx.fillText(w.conf, x0 + 1, y0 - 1);
+      }
+    }
+  }
+
+  function renderSummary(canvas, words) {
+    const total = words.length;
+    const highConf = words.filter(w => w.conf >= 80).length;
+    const midConf = words.filter(w => w.conf >= 50 && w.conf < 80).length;
+    const lowConf = words.filter(w => w.conf < 50).length;
+    const avgConf = total ? Math.round(words.reduce((a,w) => a + w.conf, 0) / total) : 0;
+    const xValues = words.map(w => w.cx).sort((a,b)=>a-b);
+    const yValues = words.map(w => w.cy).sort((a,b)=>a-b);
+
+    document.getElementById('summary-content').innerHTML = `
+      <div class="bg-[#0d1117] rounded p-3 space-y-1">
+        <div class="text-gray-500">이미지 크기</div>
+        <div class="text-white font-bold">${canvas.width} × ${canvas.height} px</div>
+      </div>
+      <div class="bg-[#0d1117] rounded p-3 space-y-1">
+        <div class="text-gray-500">총 단어 수</div>
+        <div class="text-white font-bold">${total}개</div>
+      </div>
+      <div class="bg-[#0d1117] rounded p-3 space-y-1">
+        <div class="text-gray-500">평균 신뢰도</div>
+        <div class="text-white font-bold">${avgConf}%</div>
+      </div>
+      <div class="bg-[#0d1117] rounded p-3 space-y-1">
+        <div class="text-gray-500">신뢰도 분포</div>
+        <div class="space-y-0.5">
+          <div class="text-blue-400">🟦 80%+ : ${highConf}개</div>
+          <div class="text-yellow-400">🟨 50~79% : ${midConf}개</div>
+          <div class="text-red-400">🟥 ~49% : ${lowConf}개</div>
+        </div>
+      </div>
+      <div class="bg-[#0d1117] rounded p-3 space-y-1">
+        <div class="text-gray-500">X좌표 범위 (중심)</div>
+        <div class="text-white font-bold">${xValues[0] ?? '-'} ~ ${xValues[xValues.length-1] ?? '-'} px</div>
+      </div>
+      <div class="bg-[#0d1117] rounded p-3 space-y-1">
+        <div class="text-gray-500">Y좌표 범위 (중심)</div>
+        <div class="text-white font-bold">${yValues[0] ?? '-'} ~ ${yValues[yValues.length-1] ?? '-'} px</div>
+      </div>
+    `;
+  }
+
+  function renderTable() {
+    const filterLow = document.getElementById('filter-low-conf').checked;
+    const filterShort = document.getElementById('filter-short').checked;
+    const filterText = document.getElementById('filter-text').value.trim().toLowerCase();
+
+    let words = allWords.filter(w => {
+      if (filterLow && w.conf < 50) return false;
+      if (filterShort && w.text.trim().length <= 1) return false;
+      if (filterText && !w.text.toLowerCase().includes(filterText)) return false;
+      return true;
+    });
+
+    const tbody = document.getElementById('word-table-body');
+    tbody.innerHTML = words.map(w => {
+      const confColor = w.conf >= 80 ? 'text-blue-400' : w.conf >= 50 ? 'text-yellow-400' : 'text-red-400';
+      return `<tr class="border-b border-[#21262d] hover:bg-[#21262d] transition-colors">
+        <td class="p-2 text-gray-600">${w.idx}</td>
+        <td class="p-2 text-white font-bold max-w-[160px] truncate" title="${w.text}">${w.text}</td>
+        <td class="p-2 text-right text-gray-400">${w.x0}</td>
+        <td class="p-2 text-right text-gray-400">${w.y0}</td>
+        <td class="p-2 text-right text-gray-400">${w.x1}</td>
+        <td class="p-2 text-right text-gray-400">${w.y1}</td>
+        <td class="p-2 text-right text-green-400 font-bold">${w.cx}</td>
+        <td class="p-2 text-right text-green-400 font-bold">${w.cy}</td>
+        <td class="p-2 text-right text-gray-500">${w.w}</td>
+        <td class="p-2 text-right text-gray-500">${w.h}</td>
+        <td class="p-2 text-right ${confColor} font-bold">${w.conf}</td>
+      </tr>`;
+    }).join('');
+
+    document.getElementById('table-count').textContent =
+      `${words.length}개 표시 / 전체 ${allWords.length}개`;
+  }
+
+  function copyJSON() {
+    const json = JSON.stringify(allWords, null, 2);
+    navigator.clipboard.writeText(json).then(() => {
+      const btn = event.target;
+      btn.textContent = '✅ 복사됨';
+      setTimeout(() => btn.textContent = '📋 JSON 복사', 2000);
+    }).catch(() => {
+      // fallback
+      const ta = document.createElement('textarea');
+      ta.value = json; document.body.appendChild(ta);
+      ta.select(); document.execCommand('copy');
+      document.body.removeChild(ta);
+    });
+  }
+</script>
+</body>
+</html>
