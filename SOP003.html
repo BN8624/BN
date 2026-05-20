@@ -1,0 +1,1399 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI SOP OCR v0.03</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap');
+    * { box-sizing: border-box; }
+    body { background: #d6e8df; margin: 0; font-family: 'IBM Plex Sans KR', sans-serif; }
+    .mono { font-family: 'IBM Plex Mono', monospace; }
+    .scrollbar::-webkit-scrollbar { width: 3px; }
+    .scrollbar::-webkit-scrollbar-track { background: transparent; }
+    .scrollbar::-webkit-scrollbar-thumb { background: #b0ccbb; border-radius: 2px; }
+    .grid-bg {
+      background-image:
+        linear-gradient(rgba(0,80,40,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,80,40,0.04) 1px, transparent 1px);
+      background-size: 40px 40px;
+    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+    @keyframes slideUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+    .blink { animation: blink 1s step-end infinite; }
+    .slide-up { animation: slideUp 0.3s ease forwards; }
+    .terminal-border {
+      border: 1px solid #b0ccbb;
+      box-shadow: inset 0 0 20px rgba(0,60,30,0.04);
+    }
+    .accent { color: #1e6644; }
+    .accent-dim { color: #4a9970; }
+    .btn-primary {
+      background: #f5a623;
+      color: #fff;
+      font-weight: 700;
+      transition: all 0.15s;
+      border: none;
+    }
+    .btn-primary:hover { background: #e09518; transform: translateY(-1px); }
+    .btn-primary:active { transform: translateY(0); }
+    .btn-primary.done { background: #2d7a56; }
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid #b0ccbb;
+      color: #4a7a62;
+      transition: all 0.15s;
+    }
+    .btn-ghost:hover { border-color: #8aad9a; color: #1e6644; }
+    .btn-report {
+      background: #2c3e50;
+      border: 1px solid #4a6272;
+      color: #a8c4b4;
+      transition: all 0.15s;
+    }
+    .btn-report:hover { background: #3a5068; }
+    .btn-danger {
+      background: #c0392b;
+      border: none;
+      color: #fff;
+      font-weight: 700;
+      transition: all 0.15s;
+    }
+    .btn-danger:hover { background: #a93226; }
+    .progress-bar {
+      height: 3px;
+      background: #b0ccbb;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: #2d7a56;
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+    input[type="password"], input[type="text"] {
+      background: #dceee5;
+      border: 1px solid #b0ccbb;
+      color: #1e6644;
+      font-family: 'IBM Plex Mono', monospace;
+      transition: border-color 0.15s;
+    }
+    input[type="password"]:focus, input[type="text"]:focus {
+      outline: none;
+      border-color: #2d7a56;
+      box-shadow: 0 0 0 2px rgba(45,122,86,0.15);
+    }
+    input::placeholder { color: #8aad9a; }
+    .stat-card {
+      background: #dceee5;
+      border: 1px solid #b0ccbb;
+      border-radius: 8px;
+      padding: 12px 16px;
+    }
+    .warn { color: #c0392b; }
+    .warn-border { border-color: #c0392b !important; box-shadow: 0 0 12px rgba(192,57,43,0.15) !important; }
+    .orange { color: #e07a2f; }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div style="color:#444;padding:60px;text-align:center;font-family:'IBM Plex Mono',monospace;">
+      <div style="color:#00ff8c;font-size:13px;letter-spacing:3px;">INITIALIZING AI SOP OCR...</div>
+    </div>
+  </div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+/**
+ * AI SOP OCR v0.03
+ * Select → OCR → Process
+ *
+ * [v0.03 패치노트]
+ * 1. DB명 변경: AI_SOP_OCR_v001 → AI_SOP_OCR (버전 무관 데이터 유지)
+ * 2. 다운로드 파일명 변경: sop003_날짜.xlsx / sop003_날짜.txt (확장자로 구분)
+ * 3. 완료 화면 파일 요약: 처리 파일명+페이지+추출행 표시
+ * 4. 엑셀 다운로드 피드백: 클릭 후 "✅ 다운로드 완료" 잠깐 표시
+ * 5. 탭폴백 경고: 완료 화면에 주황색 경고 배지 표시
+ * 6. MAX_TOKENS 경고: 발생 페이지 번호 완료 화면에 표시
+ * 7. WARN_RPM 8→9
+ * 8. UI 테마: 파스텔 그린 계열로 변경
+ *
+ * [아키텍처 개요]
+ * - 1-Pass 파이프라인: 정찰 폐지, API 1회 호출로 데이터 직접 추출
+ * - 적응형 전처리: 밝기 분석 후 동적 contrast/brightness 적용
+ * - 그레이스케일 변환: 컬러 잡음 제거
+ * - JSON Lines 파싱: 헤더명 키 기반, 위치 의존 제거, 밀림 0건
+ * - 탭 폴백: JSON 0건 시 자동 전환
+ * - SlidingWindowQueue: RPM 방어 (4/60s, 한도 15 RPM)
+ * - 시스템 검토 컬럼: 조건 A(금액누락) B(데이터유실) C(중복행)
+ * - 모니터링: 최대 RPM / TPM / 출력토큰 추적
+ */
+
+// ── CONFIG ────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  GEMINI_URL: "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-3.1-flash-lite:generateContent",
+  TIMEOUT_MS: 180000,
+  MAX_RETRIES: 4,
+  CONCURRENCY_LIMIT: 2,
+  // Vertex AI AQ키 실제 한도
+  LIMIT_RPM: 10,
+  LIMIT_TPM: 250000,
+  LIMIT_OUTPUT_TOKENS: 65535,
+  // 경고 기준
+  WARN_RPM: 9,
+  WARN_TPM: 230000,
+  WARN_OUTPUT_TOKENS: 60000,
+};
+
+// ── DB ────────────────────────────────────────────────────────────────────────
+const DB_NAME = 'AI_SOP_OCR';
+const STORE_NAME = 'data';
+const VERSION_CODE = '003';  // 버전 코드 (파일명용)
+const pad = (n) => String(n).padStart(2, '0');
+const stamp = () => {
+  const d = new Date();
+  return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}`;
+};
+const fileStamp = () => `sop${VERSION_CODE}_${stamp()}`;  // sop003_20260520_1234
+
+// ── WebP 지원 감지 ─────────────────────────────────────────────────────────────
+const supportsWebP = (() => {
+  try {
+    const c = document.createElement('canvas');
+    if (c.getContext && c.getContext('2d'))
+      return c.toDataURL('image/webp').startsWith('data:image/webp');
+  } catch(e) {}
+  return false;
+})();
+
+// ── 유틸 ──────────────────────────────────────────────────────────────────────
+const fileToBase64 = (file) => new Promise((res, rej) => {
+  const r = new FileReader();
+  r.readAsDataURL(file);
+  r.onload = () => res(r.result.split(',')[1]);
+  r.onerror = rej;
+});
+
+const calculateETA = (smaArr, remaining, concurrency) => {
+  if (remaining === 0) return '마무리 중...';
+  if (!smaArr.length) return '';
+  const avg = smaArr.reduce((a,b)=>a+b,0) / smaArr.length;
+  const ms = (remaining * avg) / Math.min(concurrency, remaining);
+  const sec = Math.ceil(ms / 1000);
+  if (sec < 60) return `약 ${sec}초 예상`;
+  return `약 ${Math.floor(sec/60)}분 ${sec%60 > 0 ? (sec%60)+'초 ' : ''}예상`;
+};
+
+// ── 적응형 전처리 ──────────────────────────────────────────────────────────────
+const analyzeBrightness = (ctx, w, h) => {
+  // 상단 로고/헤더 건너뛰고 표 시작 구간 샘플링
+  // 카드 명세서는 h 15%~50% 구간에 거래 내역 표가 시작됨
+  const sx = Math.floor(w * 0.1);
+  const sy = Math.floor(h * 0.15);
+  const sw = Math.floor(w * 0.8);
+  const sh = Math.floor(h * 0.35);
+  const data = ctx.getImageData(sx, sy, sw, sh).data;
+  let sum = 0;
+  for (let i = 0; i < data.length; i += 4) sum += data[i];
+  return sum / (data.length / 4);
+};
+
+const getAdaptiveFilter = (brightness) => {
+  if (brightness < 85)        return { contrast: 1.8, brightness: 1.3, label: '어두움' };
+  else if (brightness < 170)  return { contrast: 1.5, brightness: 1.1, label: '보통' };
+  else                        return { contrast: 1.3, brightness: 1.0, label: '밝음' };
+};
+
+// ── SlidingWindowQueue ────────────────────────────────────────────────────────
+class SlidingWindowQueue {
+  constructor(limit, windowMs, logFn) {
+    this.limit = limit;
+    this.windowMs = windowMs;
+    this.timestamps = [];
+    this.logFn = logFn || (() => {});
+  }
+  async acquire(cancelRef) {
+    while (true) {
+      if (cancelRef?.current) throw new Error('취소됨');
+      const now = Date.now();
+      this.timestamps = this.timestamps.filter(t => now - t < this.windowMs);
+      if (this.timestamps.length < this.limit) {
+        this.timestamps.push(now);
+        return;
+      }
+      const wait = this.windowMs - (now - this.timestamps[0]) + 20;
+      this.logFn(`⏳ [물레방아 대기] ${Math.ceil(wait/1000)}초 후 진입`);
+      await new Promise(r => setTimeout(r, wait));
+    }
+  }
+}
+
+const globalRateLimitQueue = new SlidingWindowQueue(8, 60000);
+
+// ── parseRawText ──────────────────────────────────────────────────────────────
+const isDatePattern = (str) => /\d{2,4}[.\-\/]\d{1,2}/.test(str);
+
+const parseRawText = (text, globalHeaderRef, currentArray, repObj) => {
+  const rawLines = text.split('\n').map(l => l.replace(/\r/g,'').trim()).filter(l => l.length > 0);
+
+  // JSON Lines 우선 파싱
+  let jsonRows = [];
+  let jsonHeader = null;
+  let jsonParsedCount = 0;
+
+  for (const ln of rawLines) {
+    if (!(ln.startsWith('{') || ln.startsWith('['))) continue;
+    let obj;
+    try { obj = JSON.parse(ln); } catch(e) { continue; }
+    if (Array.isArray(obj)) {
+      if (!jsonHeader && obj.length >= 2 && obj.every(v => typeof v === 'string')) {
+        jsonHeader = obj.map(s => String(s).trim());
+      }
+      continue;
+    }
+    if (obj && typeof obj === 'object') { jsonRows.push(obj); jsonParsedCount++; }
+  }
+
+  if (jsonParsedCount > 0) {
+    if (jsonHeader && !globalHeaderRef.current) {
+      globalHeaderRef.current = jsonHeader;
+      currentArray.push(jsonHeader);
+      repObj.headerFound = true;
+    }
+    let header = globalHeaderRef.current;
+    if (!header) {
+      const keyset = [];
+      jsonRows.forEach(o => Object.keys(o).forEach(k => { if (!keyset.includes(k)) keyset.push(k); }));
+      header = keyset;
+      if (header.length >= 2) {
+        globalHeaderRef.current = header;
+        currentArray.push(header);
+        repObj.headerFound = true;
+      }
+    }
+    let parsed = 0;
+    for (const o of jsonRows) {
+      const vals = Object.values(o).map(v => v == null ? '' : String(v).trim());
+      if (/소계|합계|총합|총계/.test(vals.join(' '))) continue;
+      if (!vals.some(v => isDatePattern(v))) continue;
+      const row = header.map(h => {
+        const v = o[h];
+        return (v === undefined || v === null) ? '' : String(v).trim();
+      });
+      currentArray.push(row);
+      repObj.rows++;
+      parsed++;
+    }
+    repObj.jsonParsed = (repObj.jsonParsed || 0) + parsed;
+    repObj.tabFallback = false;
+    return;
+  }
+
+  // 탭 폴백
+  repObj.tabFallback = true;
+  const lines = text.split('\n')
+    .map(l => l.replace(/\r/g,'').trimEnd())
+    .filter(l => l.trim().length > 0 && !l.match(/^[-=_]+$/));
+
+  for (const line of lines) {
+    const cols = line.split('\t').map(c => c.trim());
+    if (/소계|합계|총합|총계/.test(cols[0]) && cols[0].length < 6) continue;
+    const numericCount = cols.filter(c => {
+      const s = c.replace(/[,\/\-]/g,'').trim();
+      return (s !== '' && !isNaN(s)) || isDatePattern(c);
+    }).length;
+    const hasHeader = cols.some(c => /날짜|일자|이용일|이용일자|거래일|승인일/.test(c));
+    if ((cols.length >= 3 && !isDatePattern(cols[0]) && numericCount <= 1) || hasHeader) {
+      if (!globalHeaderRef.current) { globalHeaderRef.current = cols; currentArray.push(cols); repObj.headerFound = true; }
+      continue;
+    }
+    if (!cols.some(c => isDatePattern(c))) continue;
+    currentArray.push(cols);
+    repObj.rows++;
+  }
+};
+
+// ── isRealMoney ───────────────────────────────────────────────────────────────
+const isRealMoney = (str) => {
+  if (typeof str !== 'string' || str.trim() === '') return false;
+  const s = str.trim();
+  if (s.includes('/') || s.includes('-')) return false;
+  if (s !== '0' && /^0\d/.test(s)) return false;
+  const noComma = s.replace(/,/g, '');
+  if (!s.includes(',') && /^\d+$/.test(noComma) && noComma.length >= 10) return false;
+  return /^-?\d{1,3}(,\d{3})*(\.\d+)?$/.test(s) || /^-?\d+(\.\d+)?$/.test(s);
+};
+
+// ── useDB ─────────────────────────────────────────────────────────────────────
+function useDB(key, init) {
+  const [data, setData] = useState(init);
+  const dbRef = useRef(null);
+  const initRef = useRef(init);
+  useEffect(() => {
+    try {
+      if (!window.indexedDB) return;
+      const req = window.indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
+      };
+      req.onsuccess = (e) => {
+        dbRef.current = e.target.result;
+        const g = dbRef.current.transaction(STORE_NAME,'readonly').objectStore(STORE_NAME).get(key);
+        g.onsuccess = () => { if (g.result !== undefined) setData(g.result); };
+      };
+    } catch(e) { console.warn('IndexedDB 차단:', e); }
+  }, [key]);
+  const save = useCallback((d) => {
+    setData(d);
+    try { if (dbRef.current) dbRef.current.transaction(STORE_NAME,'readwrite').objectStore(STORE_NAME).put(d, key); } catch(e) {}
+  }, [key]);
+  const clear = useCallback(() => {
+    setData(initRef.current);
+    try { if (dbRef.current) dbRef.current.transaction(STORE_NAME,'readwrite').objectStore(STORE_NAME).delete(key); } catch(e) {}
+  }, [key]);
+  return [data, save, clear];
+}
+
+// ── ErrorBoundary ─────────────────────────────────────────────────────────────
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(e) { return { hasError: true, error: e }; }
+  render() {
+    if (this.state.hasError) return (
+      <div style={{background:'#0a0a0a',color:'#ff4444',padding:'3rem',minHeight:'100vh',fontFamily:'IBM Plex Mono,monospace'}}>
+        <div style={{color:'#00ff8c',marginBottom:'1rem',fontSize:'12px',letterSpacing:'3px'}}>SYSTEM ERROR</div>
+        <pre style={{fontSize:'12px',color:'#ff6666'}}>{this.state.error?.toString()}</pre>
+      </div>
+    );
+    return this.props.children;
+  }
+}
+
+// ── Icons ─────────────────────────────────────────────────────────────────────
+const Icons = {
+  Upload: ({className}) => <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/></svg>,
+  Download: ({className}) => <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>,
+  Key: ({className}) => <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>,
+  Spinner: ({className}) => <svg className={className} fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>,
+  Check: ({className}) => <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>,
+  Warning: ({className}) => <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg>,
+  Trash: ({className}) => <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>,
+  Retry: ({className}) => <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>,
+  RotateLeft: ({className}) => <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path strokeLinecap="round" strokeLinejoin="round" d="M3 3v5h5"/></svg>,
+  RotateRight: ({className}) => <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path strokeLinecap="round" strokeLinejoin="round" d="M21 3v5h-5"/></svg>,
+};
+
+// ── PROMPT ────────────────────────────────────────────────────────────────────
+const EXTRACT_PROMPT = `[카드 명세서 데이터 추출 — 키-값(JSON Lines) 방식]
+임무: 이 페이지의 거래 내역 표를 추출하세요. 어떤 판단·가공도 하지 말고 보이는 그대로 추출합니다.
+
+[가장 중요한 출력 규칙]
+- 각 거래 행을 '한 줄에 하나의 JSON 객체'로 출력하세요 (JSON Lines).
+- 객체의 'key'는 표의 헤더(컬럼명)를 그대로 사용하세요. 카드사마다 컬럼명이 다르므로, 이 표에 실제로 적힌 헤더 텍스트를 키로 쓰세요.
+- 어떤 컬럼의 값이 비어 있으면, 그 키 자체를 '아예 출력하지 마세요'. (빈 문자열도 넣지 말 것)
+- 값이 있는 컬럼만 키-값으로 담으세요. 위치(순서)가 아니라 '이름표'로 칸을 표현하는 것이 핵심입니다.
+
+[왜 이렇게 하나]
+- 일시불 거래는 '이용금액'·'할부기간' 칸이 비어 있고 '원금' 칸에만 금액이 있습니다.
+- 이때 비어 있는 칸을 억지로 채우거나 자리를 당기지 말고, 값이 있는 '원금' 키에만 그 금액을 담으면 됩니다.
+
+[첫 줄: 헤더 정의]
+- 가장 첫 줄에는 이 표의 컬럼명을 왼쪽→오른쪽 순서대로 담은 JSON 배열을 출력하세요.
+  예: ["이용일자","이용카드","이용가맹점","이용금액","할부기간/회차","원금","수수료(이자)","구분","금액"]
+- 2행 헤더(대분류/소분류)면 실제 데이터가 들어가는 하위 컬럼명만 사용하세요.
+
+[그 다음 줄들: 데이터]
+- 각 거래 행을 위 헤더의 키를 사용한 JSON 객체로 한 줄씩 출력.
+- 값은 원본 그대로(숫자 콤마/소수점 보존). 0원인 셀은 "0".
+- 소계·합계·총계 등 집계 행은 제외.
+- JSON 외 설명·마크다운·코드펜스 절대 금지. 순수 텍스트 라인만.`;
+
+// ── App ───────────────────────────────────────────────────────────────────────
+function App() {
+  const [status, setStatus] = useState('loading');
+  const [logs, setLogs] = useState([]);
+  const [rows, saveRows, clearRows] = useDB('rows', []);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [elapsed, setElapsed] = useState(0);
+  const [append, setAppend] = useState(false);
+  const [failedTasks, setFailedTasks] = useState([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [progress, setProgress] = useState({ current: 0, total: 0, estimate: '' });
+  const [previewInfo, setPreviewInfo] = useState(null);
+  const [liveStats, setLiveStats] = useState({ rpm: 0, tpm: 0, maxOutputTokens: 0 });
+  const [downloadDone, setDownloadDone] = useState(false);
+  const [filesSummary, setFilesSummary] = useState([]);  // [{name, pages, rows}]
+  const [tabFallbackFiles, setTabFallbackFiles] = useState([]);  // 탭폴백 발생 파일명
+  const [maxTokensPages, setMaxTokensPages] = useState([]);  // MAX_TOKENS 발생 페이지
+
+  const [apiKey, setApiKey] = useState(() => {
+    try { return localStorage.getItem('sop_api_key') || ''; } catch(e) { return ''; }
+  });
+
+  // refs
+  const fileRef = useRef(null);
+  const cancelRef = useRef(false);
+  const activeRequestsRef = useRef(new Set());
+  const timerRef = useRef(null);
+  const logsRef = useRef([]);
+  const reportRef = useRef([]);
+
+  // 모니터링 refs
+  const usageHistoryRef = useRef([]);
+  const maxRpmRef = useRef(0);
+  const maxTpmRef = useRef(0);
+  const maxOutputTokensRef = useRef(0);
+  const grandTotalReqRef = useRef(0);
+
+  const log = useCallback((msg) => {
+    const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    logsRef.current.push(line);
+    setLogs(prev => [line, ...prev].slice(0, 120));
+  }, []);
+
+  globalRateLimitQueue.logFn = log;
+
+  const markRequest = useCallback((id, startMs) => {
+    usageHistoryRef.current.push({ id, ts: startMs, outputTokens: 0 });
+    grandTotalReqRef.current += 1;
+  }, []);
+
+  const markRequestEnd = useCallback((id, outputTokens) => {
+    const r = usageHistoryRef.current.find(x => x.id === id);
+    if (r) r.outputTokens = outputTokens;
+    maxOutputTokensRef.current = Math.max(maxOutputTokensRef.current, outputTokens);
+  }, []);
+
+  // 엔진 로딩
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      const inject = (src) => new Promise((res, rej) => {
+        if (document.querySelector(`script[src="${src}"]`)) return res();
+        const s = document.createElement('script');
+        s.src = src; s.onload = res; s.onerror = rej;
+        document.body.appendChild(s);
+      });
+      try {
+        log('⚡ AI SOP OCR v0.02 엔진 초기화 중...');
+        await inject('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
+        if (window.pdfjsLib)
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        log(`✅ 엔진 준비 완료 (WebP: ${supportsWebP ? '활성' : 'JPEG 폴백'})`);
+        if (mounted) setStatus('idle');
+      } catch(e) {
+        if (mounted) { setStatus('error'); setErrorMsg('라이브러리 로드 실패: ' + e.message); }
+      }
+    };
+    load();
+    return () => { mounted = false; };
+  }, [log]);
+
+  // API 호출
+  const callExtract = useCallback(async (base64, mimeType, chunkIndex) => {
+    let attempt = 1;
+    while (attempt <= CONFIG.MAX_RETRIES) {
+      if (cancelRef.current) throw new Error('취소됨');
+      await globalRateLimitQueue.acquire(cancelRef);
+      if (cancelRef.current) throw new Error('취소됨');
+
+      const reqId = `extract_${chunkIndex}_${Date.now()}`;
+      markRequest(reqId, Date.now());
+      const apiStart = Date.now();
+
+      const controller = new AbortController();
+      activeRequestsRef.current.add(controller);
+      const tid = setTimeout(() => controller.abort(), CONFIG.TIMEOUT_MS);
+
+      try {
+        const res = await fetch(`${CONFIG.GEMINI_URL}?key=${apiKey.trim()}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: EXTRACT_PROMPT }] },
+            contents: [{ role: 'user', parts: [
+              { text: '값이 있는 컬럼만 헤더명을 키로 사용해 JSON Lines로 출력하세요. 첫 줄은 헤더 컬럼명 JSON 배열입니다.' },
+              { inlineData: { mimeType, data: base64 } }
+            ]}],
+            generationConfig: {
+              responseMimeType: 'text/plain',
+              temperature: 0,
+              topP: 0.1,
+              maxOutputTokens: CONFIG.LIMIT_OUTPUT_TOKENS
+            },
+            safetySettings: [
+              { category: "HARM_CATEGORY_HARASSMENT",        threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_HATE_SPEECH",       threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_CIVIC_INTEGRITY",   threshold: "BLOCK_NONE" }
+            ]
+          }),
+          signal: controller.signal
+        });
+        clearTimeout(tid);
+        activeRequestsRef.current.delete(controller);
+
+        if (!res.ok) throw new Error(`API ${res.status}: ${(await res.text()).substring(0, 200)}`);
+
+        const json = await res.json();
+        const finishReason = json.candidates?.[0]?.finishReason || 'UNKNOWN';
+        const usage = json.usageMetadata || {};
+        const outputTokens = usage.candidatesTokenCount || 0;
+        const inputTokens = usage.promptTokenCount || 0;
+        const apiTime = Date.now() - apiStart;
+
+        markRequestEnd(reqId, outputTokens);
+
+        if (finishReason === 'MAX_TOKENS') {
+          log(`⚠️ [페이지 ${chunkIndex}] 출력토큰 한도 도달 (${outputTokens}/${CONFIG.LIMIT_OUTPUT_TOKENS}) — 원본 대조 권장`);
+          setMaxTokensPages(prev => [...prev, chunkIndex]);
+        }
+        if (finishReason === 'SAFETY' || finishReason === 'PROHIBITED_CONTENT')
+          throw new Error('SafetyFilter: 필터 차단됨');
+
+        const text = json.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
+        const cleaned = text.replace(/```[a-z]*\n?/gi, '').trim();
+        if (!cleaned) throw new Error('EmptyResponse: 빈 응답');
+
+        return { text: cleaned, finishReason, retries: attempt - 1, outputTokens, inputTokens, apiTime };
+      } catch(err) {
+        clearTimeout(tid);
+        activeRequestsRef.current.delete(controller);
+        if (cancelRef.current) throw new Error('취소됨');
+        if (err.message.match(/401|403|400/)) throw err;
+        if (attempt >= CONFIG.MAX_RETRIES) throw err;
+        const delay = err.message.includes('429') ? 15000 : 5000 * Math.pow(2, attempt - 1);
+        log(`⚠️ [페이지 ${chunkIndex}] 재시도 ${attempt}/${CONFIG.MAX_RETRIES} (${err.message.substring(0,40)})`);
+        await new Promise(r => setTimeout(r, delay));
+        attempt++;
+      }
+    }
+  }, [apiKey, log, markRequest, markRequestEnd]);
+
+  // 청크 처리
+  const executeChunk = useCallback(async (base64, mimeType, chunkIndex, fileName) => {
+    const start = Date.now();
+    log(`⚡ [${fileName}] 페이지 [${chunkIndex}] 추출 시작`);
+    try {
+      // 큐 대기 시작 시점 기록
+      const queueStart = Date.now();
+      const result = await callExtract(base64, mimeType, chunkIndex);
+      const total = Date.now() - start;
+      const apiTime = result.apiTime || 0;
+      const waitTime = total - apiTime;
+      const waitStr = waitTime > 1000 ? ` + 대기 ${(waitTime/1000).toFixed(1)}초` : '';
+      log(`✅ [${fileName}] 페이지 [${chunkIndex}] 완료 (API ${(apiTime/1000).toFixed(1)}초${waitStr} = 총 ${(total/1000).toFixed(1)}초, 출력 ${result.outputTokens}토큰)`);
+      return { success: true, chunkIndex, result, base64, mimeType, fileName, duration: total };
+    } catch(err) {
+      if (err.message !== '취소됨') log(`❌ [${fileName}] 페이지 [${chunkIndex}] 실패: ${err.message}`);
+      return { success: false, chunkIndex, error: err, base64, mimeType, fileName };
+    }
+  }, [callExtract, log]);
+
+  // 결과 처리
+  const processResults = (resolved, currentArray, globalHeaderRef, newFailedTasks, rep) => {
+    for (const res of resolved) {
+      if (cancelRef.current) break;
+      if (!res.success) {
+        if (res.error.message !== '취소됨')
+          newFailedTasks.push({ base64: res.base64, mimeType: res.mimeType, chunkIndex: res.chunkIndex, fileName: res.fileName, total: 1 });
+        continue;
+      }
+      rep.retries += res.result.retries || 0;
+      rep.reason = res.result.finishReason;
+      rep.inputTokens = (rep.inputTokens || 0) + (res.result.inputTokens || 0);
+      rep.outputTokens = (rep.outputTokens || 0) + (res.result.outputTokens || 0);
+      parseRawText(res.result.text, globalHeaderRef, currentArray, rep);
+    }
+  };
+
+  // 타이머/모니터링 시작
+  const initTracking = () => {
+    usageHistoryRef.current = [];
+    grandTotalReqRef.current = 0;
+    maxRpmRef.current = 0;
+    maxTpmRef.current = 0;
+    maxOutputTokensRef.current = 0;
+    setElapsed(0);
+    setLiveStats({ rpm: 0, tpm: 0, maxOutputTokens: 0 });
+    const startTime = Date.now();
+    timerRef.current = setInterval(() => {
+      const now = Date.now();
+      setElapsed(Math.floor((now - startTime) / 1000));
+      usageHistoryRef.current = usageHistoryRef.current.filter(i => now - i.ts <= 60000);
+      const recent = usageHistoryRef.current;
+      const rpm = recent.length;
+      const tpm = recent.reduce((a, c) => a + c.outputTokens, 0);
+      maxRpmRef.current = Math.max(maxRpmRef.current, rpm);
+      maxTpmRef.current = Math.max(maxTpmRef.current, tpm);
+      setLiveStats({ rpm, tpm, maxOutputTokens: maxOutputTokensRef.current });
+    }, 1000);
+  };
+
+  // 미리보기
+  const prepareUpload = async (filesArray) => {
+    if (!filesArray.length) return;
+    if (!apiKey.trim()) { setErrorMsg('API Key를 입력해주세요.'); setStatus('error'); return; }
+    cancelRef.current = false;
+    const firstPdf = filesArray.find(f => f.type.includes('pdf'));
+    if (firstPdf) {
+      setStatus('preview_loading');
+      try {
+        log(`🔍 [${firstPdf.name}] 미리보기 생성 중...`);
+        const b64 = await fileToBase64(firstPdf);
+        const arr = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+        const pdf = await window.pdfjsLib.getDocument({ data: arr }).promise;
+        const page = await pdf.getPage(1);
+        const vp = page.getViewport({ scale: 300/72 });
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        canvas.width = vp.width; canvas.height = vp.height;
+        await page.render({ canvasContext: ctx, viewport: vp }).promise;
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+        canvas.width = 0; canvas.height = 0;
+        if (page.cleanup) page.cleanup();
+        if (cancelRef.current) return;
+        setPreviewInfo({ filesArray, dataUrl, rotation: 0 });
+        setStatus('preview');
+        log('👀 미리보기 완료. 방향을 확인해주세요.');
+      } catch(e) {
+        if (!cancelRef.current) { log(`❌ 미리보기 오류: ${e.message}`); setErrorMsg(e.message); setStatus('error'); }
+      }
+    } else {
+      startProcessing(filesArray, 0);
+    }
+  };
+
+  // 메인 처리
+  const startProcessing = async (filesArray, globalRotation) => {
+    setStatus('processing');
+    setPreviewInfo(null);
+    cancelRef.current = false;
+    activeRequestsRef.current.clear();
+    reportRef.current = [];
+    setFailedTasks([]);
+    setFilesSummary([]);
+    setTabFallbackFiles([]);
+    setMaxTokensPages([]);
+    setDownloadDone(false);
+    setProgress({ current: 0, total: 0, estimate: '' });
+    initTracking();
+
+    const globalHeaderRef = { current: null };
+    let current = [];
+
+    if (append && rows.length > 0) {
+      current = [...rows];
+      if (current.length > 0) globalHeaderRef.current = current[0];
+      log('📎 기존 데이터에 이어서 추가합니다.');
+    } else {
+      clearRows();
+      logsRef.current = [];
+      log('🆕 AI SOP OCR v0.02 새 작업 시작');
+    }
+
+    let allFailedTasks = [];
+    let smaQueue = [];
+
+    try {
+      // 전체 청크 수 계산
+      const fileTasks = [];
+      let totalChunks = 0;
+      for (const file of filesArray) {
+        if (cancelRef.current) break;
+        const base64 = await fileToBase64(file);
+        let mimeType = file.type || 'application/pdf';
+        if (mimeType.includes('pdf')) {
+          const arr = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+          const pdf = await window.pdfjsLib.getDocument({ data: arr }).promise;
+          totalChunks += pdf.numPages;
+          fileTasks.push({ file, mimeType: supportsWebP ? 'image/webp' : 'image/jpeg', isPdf: true, pdf });
+        } else {
+          totalChunks += 1;
+          fileTasks.push({ file, mimeType, isPdf: false, base64 });
+        }
+      }
+
+      setProgress({ current: 0, total: totalChunks, estimate: calculateETA([12000], totalChunks, CONFIG.CONCURRENCY_LIMIT) });
+
+      for (const task of fileTasks) {
+        if (cancelRef.current) break;
+        const fileStart = Date.now();
+        log(`📂 [${task.file.name}] 처리 시작`);
+
+        const rep = {
+          name: task.file.name,
+          size: (task.file.size / 1024).toFixed(1) + 'KB',
+          start: new Date().toLocaleTimeString(),
+          end: '', sec: 0, rows: 0,
+          headerFound: false,
+          tabFallback: false,
+          jsonParsed: 0,
+          retries: 0, reason: '',
+          inputTokens: 0, outputTokens: 0
+        };
+        let newFailedTasks = [];
+        const totalPages = task.isPdf ? task.pdf.numPages : 1;
+        const renderQueue = [];
+        let renderDone = false;
+
+        // JIT 렌더링
+        const renderProducer = (async () => {
+          if (!task.isPdf) {
+            renderQueue.push({ base64: task.base64, chunkIndex: 1 });
+            return;
+          }
+          const rawCanvas = document.createElement('canvas');
+          const rawCtx = rawCanvas.getContext('2d', { willReadFrequently: true });
+
+          for (let i = 1; i <= totalPages; i++) {
+            if (cancelRef.current) break;
+            while (renderQueue.length >= CONFIG.CONCURRENCY_LIMIT + 1) {
+              if (cancelRef.current) break;
+              await new Promise(r => setTimeout(r, 100));
+            }
+            if (cancelRef.current) break;
+
+            const page = await task.pdf.getPage(i);
+            const vp = page.getViewport({ scale: 300/72, rotation: (page.rotate + globalRotation) % 360 });
+            rawCanvas.width = vp.width;
+            rawCanvas.height = vp.height;
+            rawCtx.clearRect(0, 0, rawCanvas.width, rawCanvas.height);
+
+            // Step 1: 그레이스케일 렌더링
+            rawCtx.filter = 'grayscale(1)';
+            await page.render({ canvasContext: rawCtx, viewport: vp }).promise;
+            rawCtx.filter = 'none';
+
+            // Step 2: 밝기 분석
+            const brightness = analyzeBrightness(rawCtx, rawCanvas.width, rawCanvas.height);
+            const { contrast, brightness: bright, label } = getAdaptiveFilter(brightness);
+            log(`🖼️ [페이지 ${i}] 전처리: 밝기 ${Math.round(brightness)} (${label}) → contrast(${contrast}) brightness(${bright})`);
+
+            // Step 3: 적응형 대비 재적용
+            const finalCanvas = document.createElement('canvas');
+            finalCanvas.width = vp.width;
+            finalCanvas.height = vp.height;
+            const finalCtx = finalCanvas.getContext('2d');
+            finalCtx.filter = `contrast(${contrast}) brightness(${bright})`;
+            finalCtx.drawImage(rawCanvas, 0, 0);
+            finalCtx.filter = 'none';
+
+            const base64 = finalCanvas.toDataURL(task.mimeType, supportsWebP ? 0.85 : 0.9).split(',')[1];
+            finalCanvas.width = 0; finalCanvas.height = 0;
+            if (page.cleanup) page.cleanup();
+
+            renderQueue.push({ base64, chunkIndex: i });
+          }
+          rawCanvas.width = 0; rawCanvas.height = 0;
+        })();
+        renderProducer.finally(() => { renderDone = true; });
+
+        // 병렬 처리
+        const executing = new Set();
+        const chunkPromises = [];
+
+        for (let j = 0; j < totalPages; j++) {
+          if (cancelRef.current) break;
+          while (renderQueue.length === 0) {
+            if (cancelRef.current || renderDone) break;
+            await new Promise(r => setTimeout(r, 100));
+          }
+          if (cancelRef.current || (renderDone && renderQueue.length === 0)) break;
+
+          const item = renderQueue.shift();
+          const p = executeChunk(item.base64, task.mimeType, item.chunkIndex, task.file.name).then(res => {
+            executing.delete(p);
+            if (res.duration) {
+              smaQueue.push(res.duration);
+              if (smaQueue.length > 5) smaQueue.shift();
+            }
+            setProgress(prev => {
+              const next = prev.current + 1;
+              const rem = prev.total - next;
+              return { ...prev, current: next, estimate: calculateETA(smaQueue, rem, CONFIG.CONCURRENCY_LIMIT) };
+            });
+            return { ...res, index: j };
+          });
+          chunkPromises.push(p);
+          executing.add(p);
+          if (executing.size >= CONFIG.CONCURRENCY_LIMIT) await Promise.race(executing);
+        }
+
+        await renderProducer;
+        const resolved = (await Promise.all(chunkPromises)).sort((a,b) => a.index - b.index);
+        processResults(resolved, current, globalHeaderRef, newFailedTasks, rep);
+
+        allFailedTasks = [...allFailedTasks, ...newFailedTasks];
+        saveRows([...current]);
+
+        rep.end = new Date().toLocaleTimeString();
+        rep.sec = Math.round((Date.now() - fileStart) / 1000);
+        reportRef.current.push(rep);
+        // 파일 요약 수집
+        setFilesSummary(prev => [...prev, { name: task.file.name, pages: totalPages, rows: rep.rows }]);
+        if (rep.tabFallback) setTabFallbackFiles(prev => [...prev, task.file.name]);
+        log(`🏁 [${task.file.name}] 완료 — ${rep.rows}행 추출 (탭폴백: ${rep.tabFallback ? 'O' : 'X'})`);
+      }
+
+      setFailedTasks(allFailedTasks);
+      if (!cancelRef.current) {
+        if (current.length === 0 && allFailedTasks.length === 0) throw new Error('추출된 데이터가 없습니다.');
+        setStatus('success');
+      }
+    } catch(e) {
+      if (!cancelRef.current) { log(`❌ 오류: ${e.message}`); setErrorMsg(e.message); setStatus('error'); }
+    } finally {
+      clearInterval(timerRef.current);
+    }
+  };
+
+  // 재시도
+  const handleRetryFailed = async () => {
+    if (!failedTasks.length) return;
+    setStatus('processing');
+    cancelRef.current = false;
+    activeRequestsRef.current.clear();
+    initTracking();
+    let smaQueue = [];
+
+    try {
+      const tasksToRetry = [...failedTasks];
+      setFailedTasks([]);
+      setProgress({ current: 0, total: tasksToRetry.length, estimate: calculateETA([12000], tasksToRetry.length, CONFIG.CONCURRENCY_LIMIT) });
+
+      const globalHeaderRef = { current: rows.length > 0 ? rows[0] : null };
+      let current = [...rows];
+      let newFailedTasks = [];
+      log(`♻️ 누락 ${tasksToRetry.length}개 청크 재시도 시작...`);
+
+      const executing = new Set();
+      const chunkPromises = [];
+
+      for (let j = 0; j < tasksToRetry.length; j++) {
+        if (cancelRef.current) break;
+        const task = tasksToRetry[j];
+        const p = executeChunk(task.base64, task.mimeType, task.chunkIndex, task.fileName).then(res => {
+          executing.delete(p);
+          if (res.duration) { smaQueue.push(res.duration); if (smaQueue.length > 5) smaQueue.shift(); }
+          setProgress(prev => {
+            const next = prev.current + 1;
+            return { ...prev, current: next, estimate: calculateETA(smaQueue, prev.total - next, CONFIG.CONCURRENCY_LIMIT) };
+          });
+          return { ...res, index: j, task };
+        });
+        chunkPromises.push(p);
+        executing.add(p);
+        if (executing.size >= CONFIG.CONCURRENCY_LIMIT) await Promise.race(executing);
+      }
+
+      const resolved = (await Promise.all(chunkPromises)).sort((a,b) => a.index - b.index);
+      const rep = { rows: 0, retries: 0, reason: '', headerFound: false, tabFallback: false, jsonParsed: 0, inputTokens: 0, outputTokens: 0 };
+      processResults(resolved, current, globalHeaderRef, newFailedTasks, rep, cancelRef.current);
+      saveRows([...current]);
+      setFailedTasks(newFailedTasks);
+      log(`🏁 재시도 완료 — ${rep.rows}행 추가, ${newFailedTasks.length}건 재실패`);
+      if (!cancelRef.current) setStatus('success');
+    } catch(e) {
+      if (!cancelRef.current) { log(`❌ 재시도 오류: ${e.message}`); setErrorMsg(e.message); setStatus('error'); }
+    } finally { clearInterval(timerRef.current); }
+  };
+
+  // 엑셀 다운로드
+  const download = () => {
+    if (!rows.length) return;
+    const exportRows = rows.map(r => [...r]);
+    exportRows[0] = [...exportRows[0], '⚠️ 시스템 검토'];
+
+    const header = rows[0];
+    const amountColIdxs = header.reduce((acc, h, i) => {
+      if (/금액|원금|단가|합계/.test(String(h))) acc.push(i);
+      return acc;
+    }, []);
+    const dateIdx    = header.findIndex(h => /날짜|일자|이용일/.test(String(h)));
+    const storeIdx   = header.findIndex(h => /가맹점|상호|거래처/.test(String(h)));
+    const amountIdx  = header.findIndex(h => /원금|결제금액/.test(String(h)));
+    const installIdx = header.findIndex(h => /할부|회차/.test(String(h)));
+    const seenKeys   = new Set();
+
+    for (let i = 1; i < exportRows.length; i++) {
+      const row = exportRows[i];
+      const warns = [];
+
+      // 조건 A: 금액 누락
+      if (amountColIdxs.length > 0) {
+        const allEmpty = amountColIdxs.every(idx => {
+          const v = String(row[idx] ?? '').trim();
+          return v === '' || v === '0';
+        });
+        if (allEmpty) warns.push('결제금액 누락 의심');
+      }
+
+      // 조건 B: 데이터 유실
+      const filled = row.filter(v => String(v ?? '').trim() !== '').length;
+      if (filled <= 2) warns.push('데이터 유실 의심');
+
+      // 조건 C: 중복 행
+      if (dateIdx >= 0 && storeIdx >= 0 && amountIdx >= 0) {
+        const parts = [
+          String(row[dateIdx]  ?? '').trim(),
+          String(row[storeIdx] ?? '').trim(),
+          String(row[amountIdx]?? '').trim(),
+          installIdx >= 0 ? String(row[installIdx] ?? '').trim() : ''
+        ];
+        if (parts[0] || parts[1] || parts[2]) {
+          const key = parts.join('|');
+          if (seenKeys.has(key)) warns.push('중복 행 의심');
+          else seenKeys.add(key);
+        }
+      }
+
+      exportRows[i] = [...row, warns.join(', ')];
+    }
+
+    const ws = XLSX.utils.aoa_to_sheet(exportRows);
+    const range = XLSX.utils.decode_range(ws['!ref']);
+    for (let R = range.s.r; R <= range.e.r; ++R) {
+      for (let C = range.s.c; C <= range.e.c; ++C) {
+        const addr = XLSX.utils.encode_cell({ c: C, r: R });
+        const cell = ws[addr];
+        if (!cell) continue;
+        if (isRealMoney(cell.v)) {
+          const num = Number(String(cell.v).replace(/,/g, ''));
+          if (!isNaN(num)) { cell.v = num; cell.t = 'n'; cell.z = '#,##0'; }
+        } else if (typeof cell.v === 'string') { cell.t = 's'; }
+      }
+    }
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '카드내역_RAW');
+    XLSX.writeFile(wb, `${fileStamp()}.xlsx`);
+
+    const warnCount = exportRows.slice(1).filter(r => r[r.length-1] !== '').length;
+    const warnA = exportRows.slice(1).filter(r => r[r.length-1].includes('결제금액 누락')).length;
+    const warnB = exportRows.slice(1).filter(r => r[r.length-1].includes('데이터 유실')).length;
+    const warnC = exportRows.slice(1).filter(r => r[r.length-1].includes('중복 행')).length;
+    log(`💾 엑셀 다운로드 — ${rows.length-1}행 (시스템 검토 경고: ${warnCount}건 [A:${warnA} B:${warnB} C:${warnC}])`);
+    setDownloadDone(true);
+    setTimeout(() => setDownloadDone(false), 2500);
+  };
+
+  // 리포트 다운로드
+  const downloadLog = () => {
+    if (!logsRef.current.length) return;
+    let txt = `================================================\n        [ AI SOP OCR v0.02 작업 리포트 ]\n================================================\n\n`;
+    reportRef.current.forEach((r, i) => {
+      txt += `📄 [${i+1}] ${r.name} (${r.size})\n`;
+      txt += `  - 시간: ${r.start} ~ ${r.end} (${r.sec}초)\n`;
+      txt += `  - 추출: ${r.rows}행 / 헤더감지: ${r.headerFound ? 'O' : 'X'}\n`;
+      txt += `  - JSON파싱: ${r.jsonParsed}행 / 탭폴백: ${r.tabFallback ? 'O' : 'X'}\n`;
+      txt += `  - 재시도: ${r.retries}회 / finishReason: ${r.reason}\n`;
+      txt += `  - 토큰: 입력 ${(r.inputTokens||0).toLocaleString()} / 출력 ${(r.outputTokens||0).toLocaleString()}\n`;
+      txt += `-------------------------------------------------\n`;
+    });
+    txt += `\n▶ 총 소요: ${elapsed}초\n`;
+    txt += `▶ 총 API 호출: ${grandTotalReqRef.current}회\n\n`;
+    txt += `▶ 트래픽 최고치\n`;
+    txt += `  - 최대 RPM: ${maxRpmRef.current} (한도 ${CONFIG.LIMIT_RPM}, 경고 ${CONFIG.WARN_RPM} 이상)\n`;
+    txt += `  - 최대 TPM: ${maxTpmRef.current.toLocaleString()} (한도 ${CONFIG.LIMIT_TPM.toLocaleString()})\n`;
+    txt += `  - 최대 출력토큰: ${maxOutputTokensRef.current.toLocaleString()} / ${CONFIG.LIMIT_OUTPUT_TOKENS.toLocaleString()} (${CONFIG.WARN_OUTPUT_TOKENS.toLocaleString()} 초과 시 잘림 가능)\n`;
+    // 시스템 검토 조건별 집계 (rows 있을 때만)
+    if (rows.length > 1) {
+      const header = rows[0];
+      const amountColIdxs = header.reduce((acc,h,i) => { if(/금액|원금|단가|합계/.test(String(h))) acc.push(i); return acc; }, []);
+      const dateIdx   = header.findIndex(h => /날짜|일자|이용일/.test(String(h)));
+      const storeIdx  = header.findIndex(h => /가맹점|상호|거래처/.test(String(h)));
+      const amountIdx = header.findIndex(h => /원금|결제금액/.test(String(h)));
+      const installIdx= header.findIndex(h => /할부|회차/.test(String(h)));
+      const seenKeys  = new Set();
+      let cntA=0, cntB=0, cntC=0;
+      for (let i=1; i<rows.length; i++) {
+        const row = rows[i];
+        if (amountColIdxs.length>0 && amountColIdxs.every(idx=>{ const v=String(row[idx]??'').trim(); return v===''||v==='0'; })) cntA++;
+        if (row.filter(v=>String(v??'').trim()!=='').length<=2) cntB++;
+        if (dateIdx>=0&&storeIdx>=0&&amountIdx>=0) {
+          const parts=[String(row[dateIdx]??'').trim(),String(row[storeIdx]??'').trim(),String(row[amountIdx]??'').trim(),installIdx>=0?String(row[installIdx]??'').trim():''];
+          if (parts[0]||parts[1]||parts[2]) { const key=parts.join('|'); if(seenKeys.has(key)) cntC++; else seenKeys.add(key); }
+        }
+      }
+      txt += `\n▶ 시스템 검토 경고\n`;
+      txt += `  - 조건A (결제금액 누락): ${cntA}건\n`;
+      txt += `  - 조건B (데이터 유실):   ${cntB}건\n`;
+      txt += `  - 조건C (중복 행 의심):  ${cntC}건\n`;
+      txt += `  - 합계: ${cntA+cntB+cntC}건\n`;
+    }
+    txt += `\n=== 실행 로그 ===\n` + logsRef.current.join('\n');
+
+    const url = URL.createObjectURL(new Blob([txt], { type: 'text/plain;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = `${fileStamp()}.txt`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 150);
+  };
+
+  const handleFiles = (e) => {
+    const files = Array.from(e.target.files);
+    if (fileRef.current) fileRef.current.value = '';
+    prepareUpload(files);
+  };
+
+  const handleCancel = () => {
+    cancelRef.current = true;
+    activeRequestsRef.current.forEach(c => c.abort());
+    activeRequestsRef.current.clear();
+    clearInterval(timerRef.current);
+    setStatus('idle'); setPreviewInfo(null);
+    log('🛑 작업 취소됨');
+  };
+
+  const resetAll = () => {
+    clearRows();
+    setStatus('idle');
+    setLiveStats({ rpm: 0, tpm: 0, maxOutputTokens: 0 });
+    usageHistoryRef.current = [];
+    grandTotalReqRef.current = 0;
+    maxRpmRef.current = 0;
+    maxTpmRef.current = 0;
+    maxOutputTokensRef.current = 0;
+  };
+
+  const pct = progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0;
+
+  // 모니터링 UI
+  const MonitorUI = () => {
+    if (grandTotalReqRef.current === 0 && status !== 'processing') return null;
+    const { rpm, tpm, maxOutputTokens } = liveStats;
+    const rWarn = rpm >= CONFIG.WARN_RPM;
+    const tWarn = tpm >= CONFIG.WARN_TPM;
+    const oWarn = maxOutputTokens >= CONFIG.WARN_OUTPUT_TOKENS;
+    const anyWarn = rWarn || tWarn || oWarn;
+
+    return (
+      <div className="mt-6 pt-6 border-t border-[#b0ccbb]">
+        <div className="mono text-[10px] text-[#8aad9a] uppercase tracking-[3px] mb-3">// API Monitor</div>
+        <div className={`terminal-border rounded-lg p-4 bg-[#dceee5] ${anyWarn ? 'warn-border' : ''}`}>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <div className="mono text-[9px] text-[#8aad9a] mb-1">RPM (한도 {CONFIG.LIMIT_RPM})</div>
+              <div className={`mono text-xl font-bold ${rWarn ? 'warn' : 'accent'}`}>{rpm}</div>
+              <div className="progress-bar mt-1">
+                <div className="progress-fill" style={{ width: `${Math.min((rpm/CONFIG.LIMIT_RPM)*100, 100)}%`, background: rWarn ? '#c0392b' : undefined }}/>
+              </div>
+            </div>
+            <div>
+              <div className="mono text-[9px] text-[#8aad9a] mb-1">TPM (한도 250K)</div>
+              <div className={`mono text-xl font-bold ${tWarn ? 'warn' : 'accent'}`}>{(tpm/1000).toFixed(0)}K</div>
+              <div className="progress-bar mt-1">
+                <div className="progress-fill" style={{ width: `${Math.min((tpm/CONFIG.LIMIT_TPM)*100, 100)}%`, background: tWarn ? '#c0392b' : undefined }}/>
+              </div>
+            </div>
+            <div>
+              <div className="mono text-[9px] text-[#8aad9a] mb-1">출력토큰 (한도 65K)</div>
+              <div className={`mono text-xl font-bold ${oWarn ? 'warn' : 'accent'}`}>{(maxOutputTokens/1000).toFixed(1)}K</div>
+              <div className="progress-bar mt-1">
+                <div className="progress-fill" style={{ width: `${Math.min((maxOutputTokens/CONFIG.LIMIT_OUTPUT_TOKENS)*100, 100)}%`, background: oWarn ? '#c0392b' : undefined }}/>
+              </div>
+            </div>
+          </div>
+          {anyWarn && (
+            <div className="mt-3 mono text-[10px] warn flex items-center gap-2">
+              <span className="blink">■</span> 한도 근접 — 처리 속도가 지연될 수 있습니다
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-[#d6e8df] grid-bg text-[#4a7a62]">
+      <div className="relative z-10 max-w-2xl mx-auto px-4 py-10 space-y-6">
+
+        {/* 헤더 */}
+        <header className="flex items-start justify-between">
+          <div>
+            <div className="mono text-[10px] text-[#8aad9a] tracking-[4px] uppercase mb-2">// Select → OCR → Process</div>
+            <h1 className="text-2xl font-bold text-[#152b20] tracking-tight">
+              AI SOP OCR <span className="mono text-[#8aad9a] text-sm font-normal">v0.03</span>
+            </h1>
+          </div>
+          {rows.length > 1 && (
+            <div className="terminal-border rounded-lg px-4 py-2 text-right bg-[#e8f2ec]">
+              <div className="mono text-[9px] text-[#8aad9a] uppercase tracking-widest">ROWS</div>
+              <div className="mono text-xl font-bold accent">{rows.length - 1}</div>
+            </div>
+          )}
+        </header>
+
+        {/* 메인 카드 */}
+        <div className="terminal-border rounded-xl p-6 bg-[#e8f2ec]">
+
+          {/* API Key */}
+          <div className="mb-6">
+            <label className="mono text-[10px] text-[#8aad9a] uppercase tracking-[3px] flex items-center gap-2 mb-2">
+              <Icons.Key className="w-3 h-3"/> API_KEY
+            </label>
+            <input
+              type="password"
+              value={apiKey}
+              onChange={e => { setApiKey(e.target.value); try { localStorage.setItem('sop_api_key', e.target.value); } catch(err){} }}
+              placeholder="Vertex AI API Key"
+              className="w-full rounded-lg py-3 px-4 text-sm"
+            />
+          </div>
+
+          {/* 로딩 */}
+          {(status === 'loading' || status === 'preview_loading') && (
+            <div className="flex flex-col items-center py-16 gap-4">
+              <Icons.Spinner className="w-8 h-8 accent animate-spin"/>
+              <div className="mono text-[11px] text-[#8aad9a] tracking-widest">
+                {status === 'loading' ? 'INITIALIZING ENGINE...' : 'GENERATING PREVIEW...'}
+              </div>
+            </div>
+          )}
+
+          {/* 미리보기 */}
+          {status === 'preview' && previewInfo && (
+            <div className="space-y-5 slide-up">
+              <div className="mono text-[10px] text-[#8aad9a] uppercase tracking-[3px]">// 문서 방향 확인</div>
+              <div className="bg-[#d6e8df] terminal-border rounded-lg p-4 flex flex-col items-center gap-4">
+                <div className="w-full h-[50vh] max-h-[360px] flex items-center justify-center overflow-hidden rounded-lg bg-[#cde0d5]">
+                  <img
+                    src={previewInfo.dataUrl}
+                    alt="preview"
+                    className="max-w-[85%] max-h-[85%] transition-transform duration-500 origin-center"
+                    style={{ transform: `rotate(${previewInfo.rotation}deg)` }}
+                  />
+                </div>
+                <div className="flex gap-4">
+                  <button onClick={() => setPreviewInfo(p => ({...p, rotation: (p.rotation-90+360)%360}))} className="btn-ghost mono text-[11px] rounded-lg px-4 py-2.5 flex items-center gap-2">
+                    <Icons.RotateLeft className="w-4 h-4"/> 좌회전
+                  </button>
+                  <button onClick={() => setPreviewInfo(p => ({...p, rotation: (p.rotation+90)%360}))} className="btn-ghost mono text-[11px] rounded-lg px-4 py-2.5 flex items-center gap-2">
+                    우회전 <Icons.RotateRight className="w-4 h-4"/>
+                  </button>
+                </div>
+              </div>
+              <button
+                onClick={() => startProcessing(previewInfo.filesArray, previewInfo.rotation)}
+                className="btn-primary w-full py-4 rounded-lg mono text-sm tracking-wider"
+              >
+                이 방향으로 시작 →
+              </button>
+              <button
+                onClick={() => { setStatus('idle'); setPreviewInfo(null); }}
+                className="w-full btn-ghost mono text-[11px] py-3 rounded-lg"
+              >
+                취소
+              </button>
+            </div>
+          )}
+
+          {/* 대기 */}
+          {status === 'idle' && (
+            <div className="space-y-4 slide-up">
+              <label className="flex items-center gap-3 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={append}
+                  onChange={e => setAppend(e.target.checked)}
+                  className="w-4 h-4 accent-checkbox"
+                />
+                <span className="mono text-[11px] text-[#555] group-hover:text-[#888] transition-colors">
+                  기존 데이터에 이어 붙이기 (여러 파일 합산 시)
+                </span>
+              </label>
+
+              <div
+                className={`border-2 border-dashed rounded-xl p-14 text-center cursor-pointer transition-all flex flex-col items-center gap-4
+                  ${isDragging ? 'border-[#2d7a56] bg-[#cde0d5]' : 'border-[#b0ccbb] hover:border-[#8aad9a]'}`}
+                onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+                onDragLeave={e => { e.preventDefault(); setIsDragging(false); }}
+                onDrop={e => { e.preventDefault(); setIsDragging(false); if (e.dataTransfer.files?.length) prepareUpload(Array.from(e.dataTransfer.files)); }}
+                onClick={() => fileRef.current?.click()}
+              >
+                <Icons.Upload className={`w-10 h-10 transition-colors ${isDragging ? 'accent' : 'text-[#b0ccbb]'}`}/>
+                <div>
+                  <div className="mono text-sm text-[#4a7a62] mb-1">PDF 또는 이미지 드래그 & 드롭</div>
+                  <div className="mono text-[10px] text-[#8aad9a]">클릭하여 파일 선택 · 다중 선택 가능</div>
+                </div>
+                <input ref={fileRef} type="file" className="hidden" multiple accept="application/pdf,image/*" onChange={handleFiles}/>
+              </div>
+
+              {rows.length > 1 && (
+                <button onClick={resetAll} className="w-full btn-danger mono text-[11px] py-3 rounded-lg flex items-center justify-center gap-2">
+                  <Icons.Trash className="w-3.5 h-3.5"/> 데이터 초기화
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* 처리 중 */}
+          {status === 'processing' && (
+            <div className="space-y-6 py-4 slide-up">
+              <div>
+                <div className="mono text-[10px] accent uppercase tracking-[3px] mb-1 flex items-center gap-2">
+                  <span className="blink">■</span> PROCESSING
+                </div>
+                <div className="text-[#152b20] text-xl font-bold mb-4">1-Pass 추출 파이프라인 가동 중</div>
+                {progress.total > 0 && (
+                  <div>
+                    <div className="progress-bar mb-2">
+                      <div className="progress-fill" style={{ width: `${pct}%` }}/>
+                    </div>
+                    <div className="flex justify-between mono text-[10px] text-[#8aad9a]">
+                      <span>{progress.total}장 중 <span className="accent font-bold">{progress.current}장</span> 완료 ({pct}%)</span>
+                      {progress.estimate && <span className="accent-dim">{progress.estimate}</span>}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="flex justify-between items-center">
+                <div className="mono text-[10px] text-[#8aad9a]">경과 시간</div>
+                <div className="mono text-[#4a7a62]">{elapsed}s</div>
+              </div>
+              <MonitorUI/>
+              <button onClick={handleCancel} className="w-full btn-danger mono text-[11px] py-3 rounded-lg">
+                작업 취소
+              </button>
+            </div>
+          )}
+
+          {/* 완료 */}
+          {status === 'success' && (
+            <div className="space-y-4 slide-up">
+              {/* 완료 배너 */}
+              <div className="border border-[#b0ccbb] bg-[#dceee5] rounded-lg p-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Icons.Check className="w-6 h-6 accent"/>
+                  <div>
+                    <div className="mono text-[10px] accent uppercase tracking-widest">완료</div>
+                    <div className="mono text-[11px] text-[#8aad9a] mt-0.5">{elapsed}초 소요</div>
+                  </div>
+                </div>
+                <div className="mono text-2xl font-bold accent">{rows.length - 1} <span className="text-sm text-[#8aad9a] font-normal">rows</span></div>
+              </div>
+
+              {/* 파일 요약 */}
+              {filesSummary.length > 0 && (
+                <div className="border border-[#b0ccbb] bg-[#dceee5] rounded-lg p-3 space-y-1">
+                  {filesSummary.map((f, i) => (
+                    <div key={i} className="mono text-[10px] text-[#4a7a62] flex justify-between">
+                      <span className="truncate max-w-[60%]">{f.name}</span>
+                      <span className="text-[#8aad9a]">{f.pages}p · <span className="accent font-bold">{f.rows}행</span></span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* 탭폴백 경고 */}
+              {tabFallbackFiles.length > 0 && (
+                <div className="border border-[#e07a2f40] bg-[#fdf3ec] rounded-lg p-3 flex items-center gap-3">
+                  <Icons.Warning className="w-4 h-4 orange shrink-0"/>
+                  <div className="mono text-[10px] orange">
+                    탭 폴백 사용됨 — JSON 파싱 실패 파일: {tabFallbackFiles.join(', ')}
+                  </div>
+                </div>
+              )}
+
+              {/* MAX_TOKENS 경고 */}
+              {maxTokensPages.length > 0 && (
+                <div className="border border-[#e07a2f40] bg-[#fdf3ec] rounded-lg p-3 flex items-center gap-3">
+                  <Icons.Warning className="w-4 h-4 orange shrink-0"/>
+                  <div className="mono text-[10px] orange">
+                    출력토큰 한도 도달 — 페이지 {maxTokensPages.join(', ')} 원본 대조 권장
+                  </div>
+                </div>
+              )}
+
+              {/* 실패 청크 */}
+              {failedTasks.length > 0 && (
+                <div className="border border-[#c0392b30] bg-[#fdf0ee] rounded-lg p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Icons.Warning className="w-5 h-5 warn"/>
+                    <div>
+                      <div className="mono text-[11px] warn">페이지 누락</div>
+                      <div className="mono text-[10px] text-[#8aad9a]">{failedTasks.length}개 청크 실패</div>
+                    </div>
+                  </div>
+                  <button onClick={handleRetryFailed} className="btn-ghost mono text-[10px] px-4 py-2 rounded-lg flex items-center gap-2 text-[#e07a2f] border-[#e07a2f40]">
+                    <Icons.Retry className="w-3.5 h-3.5"/> 재시도
+                  </button>
+                </div>
+              )}
+
+              <MonitorUI/>
+
+              {/* 엑셀 다운로드 */}
+              <button onClick={download} className={`btn-primary w-full py-4 rounded-lg mono text-sm tracking-wider flex items-center justify-center gap-3 ${downloadDone ? 'done' : ''}`}>
+                {downloadDone ? '✅ 다운로드 완료' : <><Icons.Download className="w-5 h-5"/> 엑셀 다운로드</>}
+              </button>
+
+              <div className="grid grid-cols-3 gap-2">
+                <button onClick={() => { setStatus('idle'); setLiveStats({rpm:0,tpm:0,maxOutputTokens:0}); usageHistoryRef.current=[]; grandTotalReqRef.current=0; maxRpmRef.current=0; maxTpmRef.current=0; maxOutputTokensRef.current=0; setFilesSummary([]); setTabFallbackFiles([]); setMaxTokensPages([]); }}
+                  className="btn-ghost mono text-[11px] py-3 rounded-lg">새 작업</button>
+                <button onClick={downloadLog} className="btn-report mono text-[11px] py-3 rounded-lg">리포트</button>
+                <button onClick={resetAll} className="btn-danger mono text-[11px] py-3 rounded-lg">초기화</button>
+              </div>
+            </div>
+          )}
+
+          {/* 오류 */}
+          {status === 'error' && (
+            <div className="space-y-4 slide-up">
+              <div className="border border-[#c0392b30] bg-[#fdf0ee] rounded-lg p-5">
+                <div className="mono text-[10px] warn uppercase tracking-[3px] mb-3 flex items-center gap-2">
+                  <Icons.Warning className="w-4 h-4"/> ERROR
+                </div>
+                <div className="mono text-[11px] warn break-all">{errorMsg}</div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => { setStatus('idle'); setLiveStats({rpm:0,tpm:0,maxOutputTokens:0}); usageHistoryRef.current=[]; grandTotalReqRef.current=0; }} className="btn-ghost mono text-[11px] py-3 rounded-lg">돌아가기</button>
+                <button onClick={downloadLog} className="btn-report mono text-[11px] py-3 rounded-lg">로그 저장</button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 로그 패널 */}
+        <div className="terminal-border rounded-xl p-5 bg-[#e8f2ec]">
+          <div className="flex items-center justify-between mb-3">
+            <div className="mono text-[10px] text-[#8aad9a] uppercase tracking-[3px]">// System Logs</div>
+            <button onClick={downloadLog} className="btn-report mono text-[9px] px-3 py-1.5 rounded-md">
+              리포트 저장
+            </button>
+          </div>
+          <div className="h-52 overflow-y-auto space-y-1 scrollbar">
+            {logs.length === 0 && <div className="mono text-[10px] text-[#b0ccbb]">_ 로그 대기 중</div>}
+            {logs.map((l, i) => (
+              <div key={i} className={`mono text-[10px] leading-relaxed
+                ${i === 0 ? 'accent font-bold' : ''}
+                ${i !== 0 && (l.includes('❌') || l.includes('⚠️')) ? 'warn' : ''}
+                ${i !== 0 && l.includes('⏳') ? 'orange' : ''}
+                ${i !== 0 && !l.includes('❌') && !l.includes('⚠️') && !l.includes('⏳') ? 'text-[#8aad9a]' : ''}
+              `}>{l}</div>
+            ))}
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <ErrorBoundary><App/></ErrorBoundary>
+);
+</script>
+</body>
+</html>
